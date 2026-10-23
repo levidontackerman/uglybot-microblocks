@@ -1,0 +1,196 @@
+module main
+author Myndsets
+version 1 0 
+description 'UglyBot starter project (ESP32 DevKit V1). The UglyBot blocks are already loaded: find them under Libraries > UglyBot. Plug in your ESP32 and click Connect.'
+
+script 50 50 {
+whenStarted
+uglybot_stop
+}
+
+script 50 160 {
+uglybot_goFor 'forward' 50 1000
+}
+
+
+module UglyBot Output
+author 'Myndsets'
+version 1 0
+tags robot motor esp32 tb6612 uglybot
+choices uglybot_move forward backward 'turn left' 'turn right' 'spin left' 'spin right'
+choices uglybot_wheel left right both
+choices uglybot_stopmode brake coast
+description 'Easy driving blocks for the Myndsets UglyBot two-wheel robot (ESP32 DevKit V1 + TB6612FNG motor driver).
+
+Wiring (ESP32 DevKit V1, GPIO numbers):
+LEFT motor (A): PWMA 32, AIN1 33, AIN2 25
+RIGHT motor (B): PWMB 27, BIN1 26, BIN2 13
+TB6612 VCC and STBY to 3V3. Motors on VM. All grounds joined.
+
+Speed is -100 to 100 %. Positive = forward, negative = backward, 0 = brake.
+If a wheel turns the wrong way, use "flip wheel direction".
+If UglyBot drifts, lower the faster wheel with "set wheel balance".
+'
+variables _uglybot_ready _uglybot_pwmL _uglybot_in1L _uglybot_in2L _uglybot_pwmR _uglybot_in1R _uglybot_in2R _uglybot_flipL _uglybot_flipR _uglybot_balL _uglybot_balR
+
+  spec ' ' 'uglybot_go' 'go _ at speed _ %' 'menu.uglybot_move num' 'forward' 50
+  spec ' ' 'uglybot_goFor' 'go _ at speed _ % for _ ms' 'menu.uglybot_move num num' 'forward' 50 1000
+  spec ' ' 'uglybot_stop' 'stop UglyBot'
+  space
+  spec ' ' 'uglybot_setWheels' 'set left wheel _ % right wheel _ %' 'num num' 50 50
+  spec ' ' 'uglybot_setWheel' 'set _ wheel speed to _ %' 'menu.uglybot_wheel num' 'left' 50
+  spec ' ' 'uglybot_stopWith' 'stop UglyBot with _' 'menu.uglybot_stopmode' 'brake'
+  space
+  spec ' ' 'uglybot_flipWheel' 'flip _ wheel direction _' 'menu.uglybot_wheel bool' 'left' true
+  spec ' ' 'uglybot_setBalance' 'set wheel balance left _ % right _ %' 'num num' 100 100
+  spec ' ' 'uglybot_setPins' 'set UglyBot pins left PWM _ IN1 _ IN2 _ right PWM _ IN1 _ IN2 _' 'num num num num num num' 32 33 25 27 26 13
+  spec ' ' '_uglybot_init' '_uglybot_init'
+  spec ' ' '_uglybot_drive' '_uglybot_drive pwm _ in1 _ in2 _ speed _ balance _ flip _' 'num num num num num bool' 32 33 25 0 100 false
+  spec ' ' '_uglybot_left' '_uglybot_left _' 'num' 0
+  spec ' ' '_uglybot_right' '_uglybot_right _' 'num' 0
+  spec ' ' '_uglybot_coastAll' '_uglybot_coastAll'
+
+to '_uglybot_coastAll' {
+  comment 'IN1 = IN2 = LOW on both channels: motors free-wheel.'
+  digitalWriteOp _uglybot_in1L false
+  digitalWriteOp _uglybot_in2L false
+  digitalWriteOp _uglybot_in1R false
+  digitalWriteOp _uglybot_in2R false
+}
+
+to '_uglybot_drive' pwm in1 in2 speed balance flip {
+  comment 'Drive one TB6612FNG channel. speed -100..100 (0 = brake). PWM duty 0-1023.'
+  speed = (maximum -100 (minimum 100 speed))
+  if flip {
+    speed = (0 - speed)
+  }
+  local 'duty' ((((absoluteValue speed) * balance) * 1023) / 10000)
+  if (duty < 1) {
+    comment 'short brake: IN1 = IN2 = HIGH'
+    digitalWriteOp in1 true
+    digitalWriteOp in2 true
+    analogWriteOp pwm 0
+  } (speed > 0) {
+    digitalWriteOp in1 true
+    digitalWriteOp in2 false
+    analogWriteOp pwm duty
+  } else {
+    digitalWriteOp in1 false
+    digitalWriteOp in2 true
+    analogWriteOp pwm duty
+  }
+}
+
+to '_uglybot_init' {
+  comment 'Default pins for the ESP32 DevKit V1 UglyBot. PWM pins avoid GPIO 25/26 (MicroBlocks uses the DAC there).'
+  if (_uglybot_ready == 0) {
+    _uglybot_pwmL = 32
+    _uglybot_in1L = 33
+    _uglybot_in2L = 25
+    _uglybot_pwmR = 27
+    _uglybot_in1R = 26
+    _uglybot_in2R = 13
+    _uglybot_flipL = false
+    _uglybot_flipR = false
+    _uglybot_balL = 100
+    _uglybot_balR = 100
+    _uglybot_ready = 1
+    '_uglybot_coastAll'
+  }
+}
+
+to '_uglybot_left' speed {
+  '_uglybot_drive' _uglybot_pwmL _uglybot_in1L _uglybot_in2L speed _uglybot_balL _uglybot_flipL
+}
+
+to '_uglybot_right' speed {
+  '_uglybot_drive' _uglybot_pwmR _uglybot_in1R _uglybot_in2R speed _uglybot_balR _uglybot_flipR
+}
+
+to uglybot_flipWheel wheel on {
+  '_uglybot_init'
+  if (or (wheel == 'left') (wheel == 'both')) {
+    _uglybot_flipL = on
+  }
+  if (or (wheel == 'right') (wheel == 'both')) {
+    _uglybot_flipR = on
+  }
+}
+
+to uglybot_go move speed {
+  '_uglybot_init'
+  local 's' (minimum 100 (absoluteValue speed))
+  if (move == 'forward') {
+    '_uglybot_left' s
+    '_uglybot_right' s
+  } (move == 'backward') {
+    '_uglybot_left' (0 - s)
+    '_uglybot_right' (0 - s)
+  } (move == 'turn left') {
+    '_uglybot_left' 0
+    '_uglybot_right' s
+  } (move == 'turn right') {
+    '_uglybot_left' s
+    '_uglybot_right' 0
+  } (move == 'spin left') {
+    '_uglybot_left' (0 - s)
+    '_uglybot_right' s
+  } (move == 'spin right') {
+    '_uglybot_left' s
+    '_uglybot_right' (0 - s)
+  }
+}
+
+to uglybot_goFor move speed ms {
+  uglybot_go move speed
+  waitMillis (maximum 0 ms)
+  uglybot_stop
+}
+
+to uglybot_setBalance left right {
+  '_uglybot_init'
+  _uglybot_balL = (maximum 0 (minimum 100 left))
+  _uglybot_balR = (maximum 0 (minimum 100 right))
+}
+
+to uglybot_setPins pwmL in1L in2L pwmR in1R in2R {
+  '_uglybot_init'
+  _uglybot_pwmL = pwmL
+  _uglybot_in1L = in1L
+  _uglybot_in2L = in2L
+  _uglybot_pwmR = pwmR
+  _uglybot_in1R = in1R
+  _uglybot_in2R = in2R
+  '_uglybot_coastAll'
+}
+
+to uglybot_setWheel wheel speed {
+  '_uglybot_init'
+  if (or (wheel == 'left') (wheel == 'both')) {
+    '_uglybot_left' speed
+  }
+  if (or (wheel == 'right') (wheel == 'both')) {
+    '_uglybot_right' speed
+  }
+}
+
+to uglybot_setWheels left right {
+  '_uglybot_init'
+  '_uglybot_left' left
+  '_uglybot_right' right
+}
+
+to uglybot_stop {
+  '_uglybot_init'
+  '_uglybot_left' 0
+  '_uglybot_right' 0
+}
+
+to uglybot_stopWith mode {
+  '_uglybot_init'
+  if (mode == 'coast') {
+    '_uglybot_coastAll'
+  } else {
+    uglybot_stop
+  }
+}
