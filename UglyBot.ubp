@@ -15,7 +15,7 @@ uglybot_goFor 'forward' 50 1000
 
 module UglyBot Output
 author 'Myndsets'
-version 1 0
+version 1 1
 tags robot motor esp32 tb6612 uglybot
 choices uglybot_move forward backward 'turn left' 'turn right' 'spin left' 'spin right'
 choices uglybot_wheel left right both
@@ -23,9 +23,11 @@ choices uglybot_stopmode brake coast
 description 'Easy driving blocks for the Myndsets UglyBot two-wheel robot (ESP32 DevKit V1 + TB6612FNG motor driver).
 
 Wiring (ESP32 DevKit V1, GPIO numbers):
-LEFT motor (A): PWMA 32, AIN1 33, AIN2 25
-RIGHT motor (B): PWMB 27, BIN1 26, BIN2 13
-TB6612 VCC and STBY to 3V3. Motors on VM. All grounds joined.
+LEFT motor (A, AO1/AO2): PWMA 25, AIN1 26, AIN2 27
+RIGHT motor (B, BO1/BO2): PWMB 14, BIN1 18, BIN2 19
+Motors on VM. STBY tied to VCC. All grounds joined.
+
+GPIO 25 and 26 have no PWM in MicroBlocks (they are DAC pins), so the left speed pin is held HIGH and the left wheel speed is sent on AIN2 (GPIO 27) instead. This is automatic.
 
 Speed is -100 to 100 %. Positive = forward, negative = backward, 0 = brake.
 If a wheel turns the wrong way, use "flip wheel direction".
@@ -43,19 +45,30 @@ variables _uglybot_ready _uglybot_pwmL _uglybot_in1L _uglybot_in2L _uglybot_pwmR
   space
   spec ' ' 'uglybot_flipWheel' 'flip _ wheel direction _' 'menu.uglybot_wheel bool' 'left' true
   spec ' ' 'uglybot_setBalance' 'set wheel balance left _ % right _ %' 'num num' 100 100
-  spec ' ' 'uglybot_setPins' 'set UglyBot pins left PWM _ IN1 _ IN2 _ right PWM _ IN1 _ IN2 _' 'num num num num num num' 32 33 25 27 26 13
+  spec ' ' 'uglybot_setPins' 'set UglyBot pins left PWM _ IN1 _ IN2 _ right PWM _ IN1 _ IN2 _' 'num num num num num num' 25 26 27 14 18 19
   spec ' ' '_uglybot_init' '_uglybot_init'
-  spec ' ' '_uglybot_drive' '_uglybot_drive pwm _ in1 _ in2 _ speed _ balance _ flip _' 'num num num num num bool' 32 33 25 0 100 false
+  spec ' ' '_uglybot_drive' '_uglybot_drive pwm _ in1 _ in2 _ speed _ balance _ flip _' 'num num num num num bool' 25 26 27 0 100 false
+  spec 'r' '_uglybot_pwmOK' '_uglybot_pwmOK _' 'num' 27
+  spec ' ' '_uglybot_inPin' '_uglybot_inPin _ level _' 'num num' 27 0
+  spec ' ' '_uglybot_coast' '_uglybot_coast pwm _ in1 _ in2 _' 'num num num' 25 26 27
   spec ' ' '_uglybot_left' '_uglybot_left _' 'num' 0
   spec ' ' '_uglybot_right' '_uglybot_right _' 'num' 0
   spec ' ' '_uglybot_coastAll' '_uglybot_coastAll'
 
+to '_uglybot_coast' pwm in1 in2 {
+  comment 'IN1 = IN2 = LOW: the motor free-wheels.'
+  if ('_uglybot_pwmOK' pwm) {
+    digitalWriteOp in1 false
+    digitalWriteOp in2 false
+  } else {
+    '_uglybot_inPin' in1 0
+    '_uglybot_inPin' in2 0
+  }
+}
+
 to '_uglybot_coastAll' {
-  comment 'IN1 = IN2 = LOW on both channels: motors free-wheel.'
-  digitalWriteOp _uglybot_in1L false
-  digitalWriteOp _uglybot_in2L false
-  digitalWriteOp _uglybot_in1R false
-  digitalWriteOp _uglybot_in2R false
+  '_uglybot_coast' _uglybot_pwmL _uglybot_in1L _uglybot_in2L
+  '_uglybot_coast' _uglybot_pwmR _uglybot_in1R _uglybot_in2R
 }
 
 to '_uglybot_drive' pwm in1 in2 speed balance flip {
@@ -65,31 +78,75 @@ to '_uglybot_drive' pwm in1 in2 speed balance flip {
     speed = (0 - speed)
   }
   local 'duty' ((((absoluteValue speed) * balance) * 1023) / 10000)
-  if (duty < 1) {
-    comment 'short brake: IN1 = IN2 = HIGH'
-    digitalWriteOp in1 true
-    digitalWriteOp in2 true
-    analogWriteOp pwm 0
-  } (speed > 0) {
-    digitalWriteOp in1 true
-    digitalWriteOp in2 false
-    analogWriteOp pwm duty
+  if ('_uglybot_pwmOK' pwm) {
+    comment 'Normal TB6612FNG drive: direction on IN1/IN2, speed as PWM on the PWM pin.'
+    if (duty < 1) {
+      comment 'short brake: IN1 = IN2 = HIGH'
+      digitalWriteOp in1 true
+      digitalWriteOp in2 true
+      analogWriteOp pwm 0
+    } (speed > 0) {
+      digitalWriteOp in1 true
+      digitalWriteOp in2 false
+      analogWriteOp pwm duty
+    } else {
+      digitalWriteOp in1 false
+      digitalWriteOp in2 true
+      analogWriteOp pwm duty
+    }
   } else {
-    digitalWriteOp in1 false
-    digitalWriteOp in2 true
-    analogWriteOp pwm duty
+    comment 'PWM pin is GPIO 25/26 (DAC in MicroBlocks, no PWM). Hold it HIGH and send the PWM on an IN pin instead.'
+    digitalWriteOp pwm true
+    if (duty < 1) {
+      '_uglybot_inPin' in1 1023
+      '_uglybot_inPin' in2 1023
+    } (speed > 0) {
+      if ('_uglybot_pwmOK' in2) {
+        comment 'IN1 HIGH, IN2 pulses: forward / brake'
+        '_uglybot_inPin' in1 1023
+        '_uglybot_inPin' in2 (1023 - duty)
+      } else {
+        comment 'IN2 LOW, IN1 pulses: forward / coast'
+        '_uglybot_inPin' in2 0
+        '_uglybot_inPin' in1 duty
+      }
+    } else {
+      if ('_uglybot_pwmOK' in1) {
+        comment 'IN2 HIGH, IN1 pulses: backward / brake'
+        '_uglybot_inPin' in2 1023
+        '_uglybot_inPin' in1 (1023 - duty)
+      } else {
+        comment 'IN1 LOW, IN2 pulses: backward / coast'
+        '_uglybot_inPin' in1 0
+        '_uglybot_inPin' in2 duty
+      }
+    }
   }
 }
 
+to '_uglybot_inPin' pin level {
+  comment 'Used when the PWM pin is a DAC pin. level 0-1023. PWM-capable pins get PWM; GPIO 25/26 get plain HIGH/LOW.'
+  if ('_uglybot_pwmOK' pin) {
+    analogWriteOp pin level
+  } else {
+    digitalWriteOp pin (level > 511)
+  }
+}
+
+to '_uglybot_pwmOK' pin {
+  comment 'false for GPIO 25 and 26: MicroBlocks drives them as DAC outputs, not PWM.'
+  return (not (or (pin == 25) (pin == 26)))
+}
+
 to '_uglybot_init' {
-  comment 'Default pins for the ESP32 DevKit V1 UglyBot. PWM pins avoid GPIO 25/26 (MicroBlocks uses the DAC there).'
+  comment 'Default pins for the ESP32 DevKit V1 UglyBot (Myndsets wiring).'
   if (_uglybot_ready == 0) {
-    _uglybot_pwmL = 32
-    _uglybot_in1L = 33
-    _uglybot_in2L = 25
-    _uglybot_pwmR = 27
-    _uglybot_in1R = 26
-    _uglybot_in2R = 13
+    _uglybot_pwmL = 25
+    _uglybot_in1L = 26
+    _uglybot_in2L = 27
+    _uglybot_pwmR = 14
+    _uglybot_in1R = 18
+    _uglybot_in2R = 19
     _uglybot_flipL = false
     _uglybot_flipR = false
     _uglybot_balL = 100
@@ -194,3 +251,4 @@ to uglybot_stopWith mode {
     uglybot_stop
   }
 }
+

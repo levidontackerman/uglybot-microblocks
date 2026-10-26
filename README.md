@@ -10,16 +10,15 @@ The link opens MicroBlocks in Chrome or Edge with the UglyBot blocks already loa
 
 ## Wiring (ESP32 DevKit V1)
 
-| Motor | Speed (PWM) | Direction |
-|---|---|---|
-| Left (A) | GPIO 32 | AIN1 33, AIN2 25 |
-| Right (B) | GPIO 27 | BIN1 26, BIN2 13 |
+| Motor | PWM | IN1 | IN2 | Motor wires |
+|---|---|---|---|---|
+| Left (A) | GPIO 25 | GPIO 26 | GPIO 27 | AO1, AO2 |
+| Right (B) | GPIO 14 | GPIO 18 | GPIO 19 | BO1, BO2 |
 
-- TB6612 **VCC** and **STBY** go to the ESP32 **3V3** pin.
-- The ESP32 takes power on **VIN** from the 5 V regulator. Motors run from the driver's **VM**.
+- **STBY** is tied to **VCC**. Motors run from **VM**, with capacitors from VM to GND.
 - All grounds are joined.
 
-Speed pins avoid GPIO 25 and 26, because MicroBlocks drives those as DAC outputs, not PWM.
+MicroBlocks drives GPIO 25 and 26 as DAC outputs, so they can't do PWM. The library handles this for the left motor automatically: it holds PWMA (GPIO 25) HIGH and sends the left speed as PWM on AIN2 (GPIO 27). You don't need to do anything for this.
 
 ## Blocks
 
